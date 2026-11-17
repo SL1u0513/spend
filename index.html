@@ -142,6 +142,27 @@ table.prev .dup{opacity:.45}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 .okText{color:#2f9e6e !important}
 .errText{color:#cf4b45 !important}
+
+/* 新手引导 */
+.tour{position:fixed;inset:0;z-index:120;display:none}
+.tour.on{display:block}
+.tourBlock{position:absolute;inset:0}
+.tourSpot{
+  position:absolute;border-radius:16px;pointer-events:none;
+  box-shadow:0 0 0 9999px rgba(12,18,15,.58);
+  border:2px solid rgba(255,255,255,.7);
+  transition:top .22s ease,left .22s ease,width .22s ease,height .22s ease;
+}
+.tourCard{
+  position:absolute;background:#fff;border-radius:16px;padding:16px 16px 14px;
+  box-shadow:0 16px 48px rgba(0,0,0,.3);width:min(330px, calc(100vw - 32px));
+  transition:top .18s ease,left .18s ease;
+}
+.tourStep{font-size:11px;color:var(--mut);letter-spacing:.6px}
+.tourTitle{font-size:16.5px;font-weight:700;margin:4px 0 6px;line-height:1.35}
+.tourText{font-size:13px;line-height:1.7;color:#3c463f}
+.tourBtns{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+.tourBtns .btn{padding:9px 14px}
 .settings-row{display:grid;grid-template-columns:1fr 90px;gap:10px;align-items:center;margin-bottom:9px}
 .settings-row .t{font-size:13.5px}
 .settings-row .t small{display:block;color:var(--mut);font-size:11.5px;line-height:1.4}
@@ -250,6 +271,11 @@ table.prev .dup{opacity:.45}
   <div class="foot-note">数据只保存在这台设备的浏览器里 · 记得定期「备份」导出 JSON</div>
 </div>
 <div class="sheetWrap" id="sheet"></div>
+<div class="tour" id="tour">
+  <div class="tourBlock" id="tourBlock"></div>
+  <div class="tourSpot" id="tourSpot" style="display:none"></div>
+  <div class="tourCard" id="tourCard"></div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -1899,6 +1925,7 @@ function renderSettings(){
   h += '</div>';
   h += '<input type="file" id="jsonInput" accept=".json,application/json" hidden>';
   h += '<div class="hint" style="margin-top:10px">当前共 ' + state.tx.length + ' 笔记录、' + state.wish.length + ' 条待定、' + state.rules.length + ' 条自定义规则。</div>';
+  h += '<button class="btn ghost sm" data-act="replayTour" style="margin-top:10px">重看新手引导</button>';
   h += '</div>';
 
   h += '<div class="card"><h3>这套架构怎么用</h3><div class="hint">';
@@ -2143,6 +2170,113 @@ function clearAll(){
   toast("已清空");
 }
 
+/* ============================ 新手引导 ============================ */
+
+var TOUR_STEPS = [
+  { sel:null, title:"这不是记账软件", next:"开始",
+    text:"普通记账告诉你“花了多少”；它告诉你这笔钱该从哪个池出。四步，20 秒。" },
+  { sel:"#v-dash .hero", title:"只看一个数", next:"下一步",
+    text:"本期还剩多少可花。日均、留存率都在下面，都是算好的，不用你动手。" },
+  { sel:"#v-dash .grid2 .card.pool", title:"钱被分成五个池", next:"下一步",
+    text:"固定（房租话费订阅）、生存（吃饭交通）、成长（书课设备与 Token）、弹性（娱乐社交）。储蓄不在这里——它到账当天就转走，不算可花的钱。" },
+  { tab:"settings", sel:"#sIncome", title:"最后一步：填个数字", next:"填好了",
+    text:"把每月生活费改成你真实的数，下面会自动分好五个池。储蓄那份，今天最好就转走。" }
+];
+
+var tourIdx = -1;
+
+function tourEl(id){ return document.getElementById(id); }
+
+function startTour(){
+  tourIdx = 0;
+  var t = tourEl("tour");
+  if (!t) return;
+  t.classList.add("on");
+  lockScroll(true);
+  renderTourStep();
+}
+
+function renderTourStep(){
+  var st = TOUR_STEPS[tourIdx];
+  if (!st){ endTour(); return; }
+  if (st.tab) showTab(st.tab);
+
+  var card = tourEl("tourCard");
+  card.innerHTML =
+    '<div class="tourStep">' + (tourIdx + 1) + " / " + TOUR_STEPS.length + '</div>' +
+    '<div class="tourTitle">' + esc(st.title) + '</div>' +
+    '<div class="tourText">' + esc(st.text) + '</div>' +
+    '<div class="tourBtns">' +
+      (tourIdx > 0
+        ? '<button class="btn ghost sm" data-tour="prev">上一步</button>'
+        : '<button class="btn ghost sm" data-tour="skip">跳过</button>') +
+      '<button class="btn primary sm" data-tour="next">' + esc(st.next) + '</button>' +
+    '</div>';
+
+  setTimeout(function(){ placeTour(st); }, st.tab ? 70 : 0);
+}
+
+function placeTour(st){
+  var spot = tourEl("tourSpot");
+  var card = tourEl("tourCard");
+  if (!spot || !card || !card.offsetWidth) return;
+
+  var target = st.sel ? document.querySelector(st.sel) : null;
+  var rect = null;
+  var block = tourEl("tourBlock");
+
+  if (target){
+    target.scrollIntoView({ block: "center" });
+    var r = target.getBoundingClientRect();
+    var pad = 8;
+    rect = { top:r.top - pad, left:r.left - pad, width:r.width + pad * 2, height:r.height + pad * 2 };
+    spot.style.display = "block";
+    spot.style.top = rect.top + "px";
+    spot.style.left = rect.left + "px";
+    spot.style.width = rect.width + "px";
+    spot.style.height = rect.height + "px";
+  } else {
+    spot.style.display = "none";
+  }
+  /* 有聚光灯时用光圈的阴影压暗，否则整块遮罩压暗 */
+  if (block) block.style.background = rect ? "transparent" : "rgba(12,18,15,.58)";
+
+  var cw = card.offsetWidth, ch = card.offsetHeight;
+  var top, left;
+  if (rect){
+    var below = window.innerHeight - (rect.top + rect.height);
+    top = (below > ch + 20) ? rect.top + rect.height + 14 : Math.max(12, rect.top - ch - 14);
+    left = rect.left + rect.width / 2 - cw / 2;
+  } else {
+    top = (window.innerHeight - ch) / 2;
+    left = (window.innerWidth - cw) / 2;
+  }
+  left = Math.min(Math.max(12, left), window.innerWidth - cw - 12);
+  top = Math.min(Math.max(12, top), window.innerHeight - ch - 12);
+  card.style.top = top + "px";
+  card.style.left = left + "px";
+}
+
+function tourNext(){
+  tourIdx++;
+  if (tourIdx >= TOUR_STEPS.length) endTour();
+  else renderTourStep();
+}
+
+function tourPrev(){
+  if (tourIdx > 0){ tourIdx--; renderTourStep(); }
+}
+
+function endTour(){
+  tourIdx = -1;
+  var t = tourEl("tour");
+  if (t) t.classList.remove("on");
+  lockScroll(false);
+  if (!state.meta) state.meta = {};
+  state.meta.tourDone = true;
+  saveState();
+}
+
 /* ============================ 交互与启动 ============================ */
 
 function showTab(name){
@@ -2180,9 +2314,21 @@ function bindGlobal(){
     document.addEventListener(ev, function(e){ e.preventDefault(); }, false);
   });
 
+  window.addEventListener("resize", function(){
+    if (tourIdx >= 0) placeTour(TOUR_STEPS[tourIdx]);
+  });
+
   document.addEventListener("click", function(e){
-    var el = e.target.closest ? e.target.closest("[data-act],[data-tab],[data-pool],[data-sub],[data-filter],[data-epool],[data-esub]") : null;
+    var el = e.target.closest ? e.target.closest("[data-act],[data-tab],[data-pool],[data-sub],[data-filter],[data-epool],[data-esub],[data-tour]") : null;
     if (!el) return;
+
+    if (el.hasAttribute("data-tour")){
+      var ta = el.getAttribute("data-tour");
+      if (ta === "next") tourNext();
+      else if (ta === "prev") tourPrev();
+      else endTour();
+      return;
+    }
 
     if (el.hasAttribute("data-tab")){ showTab(el.getAttribute("data-tab")); return; }
 
@@ -2312,6 +2458,7 @@ function bindGlobal(){
     }
     if (act === "loadSample"){ loadSample(); return; }
     if (act === "clearAll"){ clearAll(); return; }
+    if (act === "replayTour"){ startTour(); return; }
   });
 
   document.addEventListener("change", function(e){
@@ -2337,6 +2484,12 @@ function init(){
   bindGlobal();
   showTab("dash");
   refresh();
+
+  if (!state.meta) state.meta = {};
+  if (!state.meta.tourDone && !state.tx.length && !state.wish.length){
+    setTimeout(function(){ startTour(); }, 450);
+  }
+
   if (!storageOk()){
     setTimeout(function(){
       toast("浏览器禁用了本地存储，记录无法保存；请换用 Chrome/Edge 打开，或把文件放到本地磁盘再从浏览器打开");
