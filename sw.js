@@ -5,7 +5,9 @@ const CACHE = "spend-arch-v1";
 const SHELL = [
   "./",
   "./index.html",
+  "./widget.html",
   "./manifest.json",
+  "./widget-manifest.json",
   "./icons/icon-192.png",
   "./icons/icon-512.png"
 ];
