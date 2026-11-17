@@ -1427,6 +1427,7 @@ function rowsToRecords(rows){
   for (var i = hi + 1; i < rows.length; i++){
     var r = rows[i];
     var t = parseTs(r[cTime]);
+    if (!t) t = serialToDate(r[cTime]);
     if (!t) continue;
     var dir = cDir >= 0 ? String(r[cDir] || "").trim() : "";
     if (dir && dir !== "支出") continue;
@@ -1497,6 +1498,99 @@ async function inflateRaw(bytes){
   return new Uint8Array(buf);
 }
 
+/* ---------- xlsx ---------- */
+
+function xmlUnescape(s){
+  return String(s == null ? "" : s)
+    .replace(/&#x([0-9a-fA-F]+);/g, function(_, h){ return String.fromCharCode(parseInt(h, 16)); })
+    .replace(/&#(\d+);/g, function(_, d2){ return String.fromCharCode(parseInt(d2, 10)); })
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+function colIndex(ref){
+  var m = /^([A-Z]+)/.exec(String(ref || "").toUpperCase());
+  if (!m) return -1;
+  var s = m[1], n = 0;
+  for (var i = 0; i < s.length; i++) n = n * 26 + (s.charCodeAt(i) - 64);
+  return n - 1;
+}
+
+/* Excel 的日期是「从 1899-12-30 起的天数」，转回本地时间 */
+function serialToDate(v){
+  var n = parseFloat(String(v == null ? "" : v).trim());
+  if (!(n > 20000 && n < 80000)) return null;
+  var ms = Math.round((n - 25569) * 86400000);
+  var probe = new Date(ms);
+  return new Date(ms + probe.getTimezoneOffset() * 60000);
+}
+
+function parseSharedStrings(xml){
+  var out = [], re = /<si[^>]*>([\s\S]*?)<\/si>/g, m;
+  while ((m = re.exec(xml))){
+    var inner = m[1], s = "", t, tre = /<t[^>]*>([\s\S]*?)<\/t>/g;
+    while ((t = tre.exec(inner))) s += xmlUnescape(t[1]);
+    out.push(s);
+  }
+  return out;
+}
+
+function parseSheetXml(xml, shared){
+  var rows = [], rre = /<row[^>]*>([\s\S]*?)<\/row>/g, rm;
+  while ((rm = rre.exec(xml))){
+    var cells = [], n = 0;
+    var cre = /<c([^>]*?)(\/>|>([\s\S]*?)<\/c>)/g, cm;
+    while ((cm = cre.exec(rm[1]))){
+      var attrs = cm[1] || "";
+      var body = cm[3] || "";
+      var ref = (attrs.match(/r="([A-Z]+)\d+"/) || [])[1];
+      var type = (attrs.match(/t="([^"]+)"/) || [])[1];
+      var val = "";
+      if (type === "s"){
+        var v = (body.match(/<v>([\s\S]*?)<\/v>/) || [])[1];
+        val = v != null ? (shared[parseInt(v, 10)] || "") : "";
+      } else if (type === "inlineStr"){
+        var it = body.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+        val = it ? xmlUnescape(it[1]) : "";
+      } else {
+        var v2 = body.match(/<v>([\s\S]*?)<\/v>/);
+        val = v2 ? xmlUnescape(v2[1]) : "";
+      }
+      var idx = ref ? colIndex(ref) : n;
+      if (idx < 0) idx = n;
+      cells[idx] = val;
+      n = idx + 1;
+    }
+    for (var k = 0; k < cells.length; k++) if (cells[k] === undefined) cells[k] = "";
+    rows.push(cells);
+  }
+  return rows;
+}
+
+/* 把 xlsx 的每个工作表解成二维数组 */
+async function xlsxToSheets(entries){
+  var files = {};
+  for (var i = 0; i < entries.length; i++){
+    var e2 = entries[i];
+    if (e2.flags & 0x1) continue;
+    var d2 = e2.data;
+    if (e2.method === 8){ try { d2 = await inflateRaw(d2); } catch(err){ continue; } }
+    else if (e2.method !== 0) continue;
+    files[e2.name] = d2;
+  }
+  var shared = files["xl/sharedStrings.xml"] ? parseSharedStrings(decodeBytes(files["xl/sharedStrings.xml"])) : [];
+  var names = Object.keys(files)
+    .filter(function(n){ return /^xl\/worksheets\/sheet\d+\.xml$/i.test(n); })
+    .sort(function(a, b){ return a.localeCompare(b, undefined, { numeric: true }); });
+
+  var out = [];
+  for (var j = 0; j < names.length; j++){
+    out.push(parseSheetXml(decodeBytes(files[names[j]]), shared));
+  }
+  return out;
+}
+
 async function handleFiles(files){
   var list = Array.prototype.slice.call(files || []);
   if (!list.length) return;
@@ -1509,16 +1603,37 @@ async function handleFiles(files){
       var parts = [];
       if (u8.length > 4 && u8[0] === 0x50 && u8[1] === 0x4b){
         var entries = readZip(u8);
-        for (var j = 0; j < entries.length; j++){
-          var e = entries[j];
-          if (!/\.csv$/i.test(e.name)) continue;
-          if (e.flags & 0x1){ notes.push(e.name + "：压缩包加密了，请先解压"); continue; }
-          var data = e.data;
-          if (e.method === 8) data = await inflateRaw(data);
-          else if (e.method !== 0){ notes.push(e.name + "：不支持的压缩方式"); continue; }
-          parts.push({ name: e.name, text: decodeBytes(data) });
+        var isXlsx = false;
+        for (var xi = 0; xi < entries.length; xi++){
+          if (/^xl\/workbook\.xml$/i.test(entries[xi].name)) { isXlsx = true; break; }
         }
-        if (!parts.length && !notes.length) notes.push(f.name + "：zip 里没有 csv");
+
+        if (isXlsx){
+          var sheets = await xlsxToSheets(entries);
+          var got = 0;
+          for (var si = 0; si < sheets.length; si++){
+            var xr = rowsToRecords(sheets[si]);
+            if (xr.error || !xr.records.length) continue;
+            for (var ri = 0; ri < xr.records.length; ri++){
+              xr.records[ri].source = "bill";
+              recs.push(xr.records[ri]);
+            }
+            got += xr.records.length;
+            notes.push(f.name + " 第 " + (si + 1) + " 个表：解析出 " + xr.records.length + " 笔");
+          }
+          if (!got) notes.push(f.name + "：xlsx 里没找到「交易时间 / 金额」表头");
+        } else {
+          for (var j = 0; j < entries.length; j++){
+            var e = entries[j];
+            if (!/\.csv$/i.test(e.name)) continue;
+            if (e.flags & 0x1){ notes.push(e.name + "：压缩包加密了，请先解压"); continue; }
+            var data = e.data;
+            if (e.method === 8) data = await inflateRaw(data);
+            else if (e.method !== 0){ notes.push(e.name + "：不支持的压缩方式"); continue; }
+            parts.push({ name: e.name, text: decodeBytes(data) });
+          }
+          if (!parts.length && !notes.length) notes.push(f.name + "：zip 里没有 csv");
+        }
       } else {
         parts.push({ name: f.name, text: decodeBytes(u8) });
       }
@@ -1557,15 +1672,15 @@ async function handleFiles(files){
 function renderImport(notes){
   var h = "";
   h += '<div class="card"><h3>加数据的三条路</h3><div class="hint">';
-  h += '<b>① 导账单</b>　支付宝/微信导出 ZIP 或 CSV，拖进下面<br>';
+  h += '<b>① 导账单</b>　支付宝/微信导出 ZIP、CSV 或 XLSX，拖进下面<br>';
   h += '<b>② 手动记</b>　金额 → 池 → 回车，3 秒一笔（在「记一笔」）<br>';
   h += '<b>③ 粘凭证</b>　截图里提取的文字粘到「记一笔」，自动填好';
   h += '</div></div>';
   h += '<div class="card">';
   h += '<h3>把账单拖进来</h3>';
-  h += '<div class="drop" id="dropZone"><b>拖入 .csv 或 .zip</b>，或点这里选文件';
+  h += '<div class="drop" id="dropZone"><b>拖入 .csv / .zip / .xlsx</b>，或点这里选文件';
   h += '<small>支付宝：我的 → 账单 → 开具交易流水 · 微信：我 → 服务 → 钱包 → 账单 → 导出账单</small></div>';
-  h += '<input type="file" id="fileInput" accept=".csv,.zip,text/csv" multiple hidden>';
+  h += '<input type="file" id="fileInput" accept=".csv,.zip,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden>';
   h += '<div class="hint" style="margin-top:10px">自动认表头、自动分类、按「时间+金额+商户」去重；导入前可以逐笔改分类。微信的 zip 有密码，先在电脑上解压再拖 csv 进来。</div>';
   h += '<div style="margin-top:12px"><button class="btn ghost" data-act="loadSample">没有账单？先载入 12 笔示例看看效果</button></div>';
   h += '</div>';
@@ -2183,7 +2298,7 @@ var TOUR_STEPS = [
   { tab:"entry", sel:"#pasteBox", title:"手动记：3 秒一笔", next:"下一步",
     text:"金额 → 选池 → 回车。也可以把支付截图里提取的文字粘进这个框，金额、时间、商户会自动填好。" },
   { tab:"import", sel:"#dropZone", title:"批量导：一个月一次就够", next:"开始用",
-    text:"支付宝/微信导出 ZIP 或 CSV 拖进来，自动认表头、自动分类、按交易单号去重。导入后分类不对就点开改，改两次会进「改错排行」，一键全改。" }
+    text:"支付宝/微信导出 ZIP、CSV 或 XLSX 拖进来，自动认表头、自动分类、按交易单号去重。导入后分类不对就点开改，改两次会进「改错排行」，一键全改。" }
 ];
 
 var tourIdx = -1;
