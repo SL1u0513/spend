@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>消费架构 · 余额</title>
+<link rel="manifest" href="widget-manifest.json">
+<meta name="theme-color" content="#1f2b25">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<style>
+:root{--bg:#f4f5f2;--ink:#1b2420;--mut:#6f7b74;--dark:#1f2b25}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{
+  background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+  display:flex;flex-direction:column;justify-content:center;padding:24px 20px calc(24px + env(safe-area-inset-bottom));
+  -webkit-tap-highlight-color:transparent;overflow-x:hidden;
+}
+#app{width:100%;max-width:100%}
+.card{background:var(--dark);color:#eef3ef;border-radius:22px;padding:26px 22px 22px;box-shadow:0 10px 30px -12px rgba(20,30,25,.5);width:100%}
+.lab{font-size:13px;color:#9fb3a7;letter-spacing:.5px}
+.big{font-size:52px;font-weight:700;letter-spacing:-1.5px;font-variant-numeric:tabular-nums;margin:6px 0 2px;line-height:1.1}
+.sub{font-size:13px;color:#a8bcb0}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:18px}
+.k{background:rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;min-width:0;overflow:hidden}
+.k b{display:block;font-size:18px;font-variant-numeric:tabular-nums;margin-top:2px}
+.k small{font-size:11.5px;color:#9fb3a7}
+.bar{height:6px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden;margin-top:16px}
+.bar i{display:block;height:100%;background:#2f9e6e;border-radius:99px}
+.foot{margin-top:18px;text-align:center;font-size:12.5px;color:var(--mut);line-height:1.7}
+.empty{text-align:center;color:var(--mut);font-size:14px;line-height:1.9}
+.empty b{color:var(--ink)}
+a.open{display:inline-block;margin-top:10px;background:var(--dark);color:#fff;text-decoration:none;padding:11px 18px;border-radius:12px;font-size:14px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+"use strict";
+
+var KEY = "spend_arch_v1";
+
+function pad2(n){ return n < 10 ? "0" + n : "" + n; }
+function num(v){ var n = parseFloat(v); return isFinite(n) ? n : 0; }
+function money(n){ return "¥" + Math.round(n).toLocaleString("zh-CN"); }
+function money2(n){ return "¥" + n.toFixed(2); }
+function esc(s){
+  return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+function parseTs(s){
+  var m = /^(\d{4})[-\/](\d{1,2})[-\/](\d{1,2})(?:[ T](\d{1,2}):(\d{1,2}))?/.exec(String(s || "").trim());
+  if (!m) return null;
+  return new Date(+m[1], +m[2] - 1, +m[3], +(m[4] || 0), +(m[5] || 0));
+}
+
+function daysInMonth(y, m){ return new Date(y, m + 1, 0).getDate(); }
+
+function periodStartOf(date, startDay){
+  var sd = Math.min(startDay, daysInMonth(date.getFullYear(), date.getMonth()));
+  if (date.getDate() >= sd) return new Date(date.getFullYear(), date.getMonth(), sd);
+  var py = date.getMonth() === 0 ? date.getFullYear() - 1 : date.getFullYear();
+  var pm = date.getMonth() === 0 ? 11 : date.getMonth() - 1;
+  return new Date(py, pm, Math.min(startDay, daysInMonth(py, pm)));
+}
+function periodEndOf(start, startDay){
+  var ny = start.getMonth() === 11 ? start.getFullYear() + 1 : start.getFullYear();
+  var nm = start.getMonth() === 11 ? 0 : start.getMonth() + 1;
+  return new Date(ny, nm, Math.min(startDay, daysInMonth(ny, nm)));
+}
+
+function load(){
+  try {
+    var raw = localStorage.getItem(KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch(e){ return null; }
+}
+
+function render(){
+  var el = document.getElementById("app");
+  var st = load();
+  var app = document.getElementById("app");
+
+  if (!st || !st.settings || !(num(st.settings.income) > 0)){
+    el.innerHTML = '<div class="empty">还没有数据。<br><b>先打开「消费架构」填一下生活费。</b><br>' +
+      '<a class="open" href="./index.html">打开应用</a></div>';
+    return;
+  }
+
+  var s = st.settings;
+  var income = num(s.income);
+  var startDay = num(s.startDay) || 1;
+  var now = new Date();
+  var start = periodStartOf(now, startDay);
+  var end = periodEndOf(start, startDay);
+  var pmi = start.getFullYear() * 12 + start.getMonth();
+
+  var total = 0, cash = 0, flexWeek = 0, flexUsed = 0;
+  var tx = Array.isArray(st.tx) ? st.tx : [];
+
+  // 本周（周一起）
+  var wkStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() - ((now.getDay() + 6) % 7));
+  var wkEnd = new Date(wkStart.getFullYear(), wkStart.getMonth(), wkStart.getDate() + 7);
+
+  for (var i = 0; i < tx.length; i++){
+    var t = tx[i];
+    var d = parseTs(t.ts);
+    if (!d) continue;
+    var a = num(t.amount);
+    var sp = num(t.spread);
+    var inPeriod = d >= start && d < end;
+
+    if (t.pool === "outside"){ continue; }
+
+    if (sp > 1){
+      if (inPeriod) cash += a;
+      var tmi = d.getFullYear() * 12 + d.getMonth();
+      if (pmi >= tmi && pmi < tmi + sp) total += a / sp;
+      continue;
+    }
+
+    if (inPeriod){
+      cash += a;
+      total += a;
+      if (t.pool === "flex" && d >= wkStart && d < wkEnd) flexWeek += a;
+    }
+  }
+
+  var remaining = income - total;
+  var daysLeft = Math.max(1, Math.round((end - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000));
+  var perDay = remaining / daysLeft;
+  var usedPct = income > 0 ? Math.min(100, Math.max(0, total / income * 100)) : 0;
+
+  // 本周弹性额度
+  var periodDays = Math.max(1, Math.round((end - start) / 86400000));
+  var weekBudget = num(s.pct && s.pct.flex) / 100 * income * 7 / periodDays;
+
+  var h = '';
+  h += '<div class="card">';
+  h += '<div class="lab">本期还剩（可花）</div>';
+  h += '<div class="big">' + money(remaining) + '</div>';
+  h += '<div class="sub">已花 ' + money(total) + ' · 生活费 ' + money(income) + ' · 还剩 ' + daysLeft + ' 天</div>';
+  h += '<div class="grid">';
+  h += '<div class="k"><small>日均可用</small><b>' + money(perDay) + '</b></div>';
+  h += '<div class="k"><small>本周弹性还剩</small><b>' + money(Math.max(0, weekBudget - flexWeek)) + '</b></div>';
+  h += '</div>';
+  h += '<div class="bar"><i style="width:' + usedPct.toFixed(1) + '%;background:' + (usedPct > 90 ? "#cf4b45" : "#2f9e6e") + '"></i></div>';
+  h += '</div>';
+
+  h += '<div class="foot">' + (Math.abs(cash - total) > 0.5 ? '本期现金支出 ' + money2(cash) + '<br>' : '') +
+       '点一下看全部明细与分类</div>';
+
+  el.innerHTML = h;
+  document.body.onclick = function(){ location.href = "./index.html"; };
+}
+
+render();
+document.addEventListener("visibilitychange", function(){ if (!document.hidden) render(); });
+window.addEventListener("pageshow", render);
+</script>
+</body>
+</html>
