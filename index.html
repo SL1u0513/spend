@@ -1556,6 +1556,11 @@ async function handleFiles(files){
 
 function renderImport(notes){
   var h = "";
+  h += '<div class="card"><h3>加数据的三条路</h3><div class="hint">';
+  h += '<b>① 导账单</b>　支付宝/微信导出 ZIP 或 CSV，拖进下面<br>';
+  h += '<b>② 手动记</b>　金额 → 池 → 回车，3 秒一笔（在「记一笔」）<br>';
+  h += '<b>③ 粘凭证</b>　截图里提取的文字粘到「记一笔」，自动填好';
+  h += '</div></div>';
   h += '<div class="card">';
   h += '<h3>把账单拖进来</h3>';
   h += '<div class="drop" id="dropZone"><b>拖入 .csv 或 .zip</b>，或点这里选文件';
@@ -2173,14 +2178,12 @@ function clearAll(){
 /* ============================ 新手引导 ============================ */
 
 var TOUR_STEPS = [
-  { sel:null, title:"这不是记账软件", next:"开始",
-    text:"普通记账告诉你“花了多少”；它告诉你这笔钱该从哪个池出。四步，20 秒。" },
-  { sel:"#v-dash .hero", title:"只看一个数", next:"下一步",
-    text:"本期还剩多少可花。日均、留存率都在下面，都是算好的，不用你动手。" },
-  { sel:"#v-dash .grid2 .card.pool", title:"钱被分成五个池", next:"下一步",
-    text:"固定（房租话费订阅）、生存（吃饭交通）、成长（书课设备与 Token）、弹性（娱乐社交）。储蓄不在这里——它到账当天就转走，不算可花的钱。" },
-  { tab:"settings", sel:"#sIncome", title:"最后一步：填个数字", next:"填好了",
-    text:"把每月生活费改成你真实的数，下面会自动分好五个池。储蓄那份，今天最好就转走。" }
+  { sel:null, title:"先喂它一口数据", next:"看看怎么加",
+    text:"空着的看板什么都说明不了。先放点真实消费进来，五池、分类、周节奏才有意义。" },
+  { tab:"entry", sel:"#pasteBox", title:"手动记：3 秒一笔", next:"下一步",
+    text:"金额 → 选池 → 回车。也可以把支付截图里提取的文字粘进这个框，金额、时间、商户会自动填好。" },
+  { tab:"import", sel:"#dropZone", title:"批量导：一个月一次就够", next:"开始用",
+    text:"支付宝/微信导出 ZIP 或 CSV 拖进来，自动认表头、自动分类、按交易单号去重。导入后分类不对就点开改，改两次会进「改错排行」，一键全改。" }
 ];
 
 var tourIdx = -1;
