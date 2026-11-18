@@ -104,12 +104,12 @@ body{
 .chip-btn.emerg{border-style:dashed;border-color:#d3c9ee;color:#6f5aa8}
 .chip-btn.emerg.on{background:#7d6bb5;border-color:#7d6bb5;color:#fff;border-style:solid}
 input.txt,select.txt{
-  width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit;font-size:14px;
-  background:#fff;color:var(--ink);outline:0;
+  width:100%;border:1px solid var(--line);border-radius:11px;padding:12px 12px;font:inherit;font-size:15px;
+  background:#fff;color:var(--ink);outline:0;min-height:46px;
 }
 textarea.txt{
-  width:100%;border:1px solid var(--line);border-radius:10px;padding:10px 11px;font:inherit;font-size:13.5px;
-  background:#fff;color:var(--ink);outline:0;min-height:72px;resize:vertical;line-height:1.55;
+  width:100%;border:1px solid var(--line);border-radius:11px;padding:12px;font:inherit;font-size:14px;
+  background:#fff;color:var(--ink);outline:0;min-height:76px;resize:vertical;line-height:1.55;
 }
 input.txt:focus,select.txt:focus,textarea.txt:focus{border-color:#b9c8bd}
 .field{margin-bottom:10px}
@@ -1925,9 +1925,10 @@ function updateAlloc(){
 
 /* ============================ 设置 ============================ */
 
+var subCyclePick = "month";
+
 function subsCardHtml(){
-  var h = "";
-  h += '<div class="card"><h3>订阅清单</h3>';
+  var h = "";  h += '<div class="card"><h3>订阅清单</h3>';
   h += '<div class="hint" style="margin-bottom:8px">共 ' + state.subs.length + ' 项，折合每月 <b>' + money0(subsMonthly()) + '</b>，一年约 <b>' + money0(subsYearly()) + '</b>。年付的按 12 个月摊成月均。</div>';
   if (state.subs.length){
     state.subs.forEach(function(sub){
@@ -1941,15 +1942,19 @@ function subsCardHtml(){
   } else {
     h += '<div class="empty">还没有记录订阅。把订过的都列一遍，固定盘该留多少就清楚了。</div>';
   }
-  h += '<div class="split" style="margin-top:12px">';
-  h += '<input class="txt" id="subName" placeholder="名称，如 QQ音乐会员" style="flex:1.7">';
-  h += '<input class="txt" id="subAmount" type="number" min="0" step="1" placeholder="金额（元）" style="flex:1">';
+  h += '<div class="label">名称</div>';
+  h += '<input class="txt" id="subName" placeholder="如 QQ音乐会员">';
+  h += '<div class="label">金额</div>';
+  h += '<input class="txt" id="subAmount" type="number" min="0" step="1" inputmode="decimal" placeholder="比如 108">';
+  h += '<div class="label">扣费周期</div>';
+  h += '<div class="chips" id="subCycleChips">';
+  [["month", "每月"], ["quarter", "每季"], ["year", "每年"]].forEach(function(c){
+    h += '<button class="chip-btn' + (subCyclePick === c[0] ? " on" : "") + '" data-cycle="' + c[0] + '">' + c[1] + '</button>';
+  });
   h += '</div>';
-  h += '<div class="split" style="margin-top:8px">';
-  h += '<select class="txt" id="subCycle"><option value="month">每月</option><option value="quarter">每季</option><option value="year">每年</option></select>';
+  h += '<div class="label">下次扣款（可空）</div>';
   h += '<input class="txt" id="subNext" type="date">';
-  h += '<button class="btn" data-act="addSub" style="flex:0 0 auto">添加</button>';
-  h += '</div>';
+  h += '<button class="btn primary" data-act="addSub" style="width:100%;margin-top:16px;padding:13px">添加订阅</button>';
   h += '</div>';
   return h;
 }
@@ -2166,14 +2171,14 @@ function addSub(){
   if (!name){ toast("先写订阅名称"); return; }
   if (!(amt > 0)){ toast("金额要大于 0"); return; }
   var cycEl = document.getElementById("subCycle");
-  var cyc = cycEl ? cycEl.value : "month";
+  var cyc = (cycEl && cycEl.value) ? cycEl.value : subCyclePick;
   var cycle = (cyc === "year" || cyc === "quarter") ? cyc : "month";
   var nextEl = document.getElementById("subNext");
   var next = nextEl ? nextEl.value : "";
   state.subs.push({ id: uid(), name: name, amount: amt, cycle: cycle, next: next });
   saveState();
   renderSettings();
-  toast("已加入订阅清单");
+  toast("已加入订阅清单，" + money0(amt) + (cycle === "year" ? " / 年" : cycle === "quarter" ? " / 季" : " / 月"));
 }
 
 function delSub(id){
@@ -2437,7 +2442,7 @@ function bindGlobal(){
   });
 
   document.addEventListener("click", function(e){
-    var el = e.target.closest ? e.target.closest("[data-act],[data-tab],[data-pool],[data-sub],[data-filter],[data-epool],[data-esub],[data-tour]") : null;
+    var el = e.target.closest ? e.target.closest("[data-act],[data-tab],[data-pool],[data-sub],[data-filter],[data-epool],[data-esub],[data-tour],[data-cycle]") : null;
     if (!el) return;
 
     if (el.hasAttribute("data-tour")){
@@ -2475,6 +2480,13 @@ function bindGlobal(){
     }
 
     if (el.hasAttribute("data-epool")){ pickEditPool(el.getAttribute("data-epool")); return; }
+    if (el.hasAttribute("data-cycle")){
+      subCyclePick = el.getAttribute("data-cycle");
+      [].slice.call(document.querySelectorAll("#subCycleChips .chip-btn")).forEach(function(b){
+        b.classList.toggle("on", b.getAttribute("data-cycle") === subCyclePick);
+      });
+      return;
+    }
     if (el.hasAttribute("data-esub")){ pickEditSub(el.getAttribute("data-esub")); return; }
 
     var act = el.getAttribute("data-act");
