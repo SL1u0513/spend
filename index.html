@@ -134,7 +134,16 @@ table.prev .dup{opacity:.45}
 .mono{font-variant-numeric:tabular-nums}
 .kv{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed #eef0ec;font-size:13.5px}
 .kv:last-child{border-bottom:0}
-.kv b{font-variant-numeric:tabular-nums}
+.kv b{font-variant-numeric:tabular-nums;text-align:right;max-width:64%}
+
+/* 三餐柱状图 */
+.chart{display:flex;gap:6px;height:132px;margin-top:10px}
+.chart .col{flex:1;min-width:0;display:flex;flex-direction:column;align-items:center;gap:4px}
+.chart .v{font-size:10.5px;color:var(--mut);font-variant-numeric:tabular-nums;height:14px;line-height:14px}
+.chart .barwrap{flex:1;width:100%;display:flex;align-items:flex-end}
+.chart .barwrap i{display:block;width:100%;background:#2f9e6e;border-radius:6px 6px 3px 3px;min-height:2px}
+.chart .barwrap i.today{background:#1f2b25}
+.chart .d{font-size:11px;color:var(--mut)}
 .toast{
   position:fixed;left:50%;bottom:26px;transform:translate(-50%,20px);background:#22302a;color:#fff;
   padding:10px 16px;border-radius:11px;font-size:13px;opacity:0;pointer-events:none;transition:.22s;z-index:99;
@@ -303,7 +312,7 @@ var ALL_POOLS = POOLS.concat([OUTSIDE]);
 
 var SUBS = {
   fixed:  ["房租水电","通讯","订阅","学费","其他"],
-  living: ["吃饭","日用","交通","医疗","洗护","其他"],
+  living: ["吃饭","零食","日用","交通","医疗","洗护","其他"],
   growth: ["书","课程","设备","文具","Token","其他"],
   flex:   ["娱乐","社交","网购","奶茶咖啡","其他"],
   outside:["医疗","牙科","药品","其他"]
@@ -561,6 +570,8 @@ var KEYWORDS = [
   ["麻辣烫","living","吃饭"],["米线","living","吃饭"],["面条","living","吃饭"],
   ["汉堡","living","吃饭"],["快餐","living","吃饭"],["档口","living","吃饭"],
   ["豆浆","living","吃饭"],["粥","living","吃饭"],
+  ["矿泉水","living","零食"],["怡宝","living","零食"],["农夫山泉","living","零食"],
+  ["饮料","living","零食"],["可乐","living","零食"],["雪碧","living","零食"],["零食","living","零食"],
   ["多多买菜","living","日用"],["超市","living","日用"],["便利店","living","日用"],
   ["全家","living","日用"],["罗森","living","日用"],["7-11","living","日用"],
   ["711","living","日用"],["永辉","living","日用"],["盒马","living","日用"],
@@ -731,22 +742,22 @@ function dailyPlan(){
   var pLeft = {};
   POOLS.forEach(function(p){ pLeft[p.id] = budgetOf(p.id) - (st.byPool[p.id] || 0); });
 
-  var dLiving = Math.max(0, pLeft.living / daysLeft);
-  var dFlex = Math.max(0, pLeft.flex / daysLeft);
-  var dFixed = Math.max(0, pLeft.fixed / daysLeft);
-  var dGrowth = Math.max(0, pLeft.growth / daysLeft);
-  var todaySpend = dLiving + dFlex;          // 一天里真正会随手花掉的部分
-
   var d7 = 7 * 86400000;
   var w1s = new Date(today.getTime() - d7);
   var w2s = new Date(today.getTime() - 2 * d7);
   var w1 = 0, w1Living = 0, w1Flex = 0, w2 = 0;
 
+  /* 最后一条记录在哪天——用来估算「已经花掉但还没导入」的钱 */
+  var lastDay = null;
+
   for (var i = 0; i < state.tx.length; i++){
     var t = state.tx[i];
-    if (t.pool === "outside") continue;
     var d = parseTs(t.ts);
     if (!d) continue;
+    if (t.pool !== "outside"){
+      if (!lastDay || d > lastDay) lastDay = d;
+    }
+    if (t.pool === "outside") continue;
     var a = num(t.amount);
     var sp = num(t.spread);
     var v = sp > 1 ? a / sp : a;
@@ -763,6 +774,27 @@ function dailyPlan(){
   var prevDaily = w2 / 7;
   var hasHistory = w1 > 0;
 
+  /* 滞后天数：今天 − 最后一条记录（最多算 7 天，再多就是根本没在记） */
+  var lagDays = 0;
+  if (lastDay){
+    lagDays = Math.round((today - startOfDay(lastDay)) / 86400000);
+    if (lagDays < 0) lagDays = 0;
+    if (lagDays > 7) lagDays = 7;
+  }
+
+  /* 未入账估算：按上周日均 × 滞后天数，并按上周的消费结构摊到生存/弹性 */
+  var estUnrecorded = hasHistory ? lastDaily * lagDays : 0;
+  var shareL = (w1 > 0) ? (w1Living / w1) : 0.85;
+  var shareF = (w1 > 0) ? (w1Flex / w1) : 0.15;
+  var estLiving = estUnrecorded * shareL;
+  var estFlex = estUnrecorded * shareF;
+
+  var dLiving = Math.max(0, (pLeft.living - estLiving) / daysLeft);
+  var dFlex = Math.max(0, (pLeft.flex - estFlex) / daysLeft);
+  var dFixed = Math.max(0, pLeft.fixed / daysLeft);
+  var dGrowth = Math.max(0, pLeft.growth / daysLeft);
+  var todaySpend = dLiving + dFlex;
+
   var weekIdx = Math.floor((today - st.range.start) / d7) + 1;
   if (weekIdx < 1) weekIdx = 1;
 
@@ -773,12 +805,35 @@ function dailyPlan(){
     dLiving: dLiving, dFlex: dFlex, dFixed: dFixed, dGrowth: dGrowth,
     todaySpend: todaySpend,
     lastDaily: lastDaily, lastLiving: w1Living / 7, lastFlex: w1Flex / 7, prevDaily: prevDaily,
-    hasHistory: hasHistory, projectedLeft: projectedLeft
+    hasHistory: hasHistory, projectedLeft: projectedLeft,
+    lagDays: lagDays, estUnrecorded: estUnrecorded
   };
 }
 
-function renderDash(){
-  var st = periodStats();
+/* 本周（周一起）每天的三餐花费，只看子类「吃饭」 */
+function mealsWeek(){
+  var now = new Date();
+  var wd = (now.getDay() + 6) % 7;
+  var start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - wd);
+  var days = [];
+  for (var i = 0; i < 7; i++){
+    days.push({ date: new Date(start.getFullYear(), start.getMonth(), start.getDate() + i), sum: 0, today: false });
+  }
+  for (var j = 0; j < state.tx.length; j++){
+    var t = state.tx[j];
+    if (t.pool === "outside" || t.sub !== "吃饭") continue;
+    var d = parseTs(t.ts);
+    if (!d) continue;
+    var a = num(t.amount);
+    for (var k = 0; k < 7; k++){
+      if (sameDay(d, days[k].date)) days[k].sum += a;
+    }
+  }
+  for (var m = 0; m < 7; m++) days[m].today = sameDay(days[m].date, now);
+  return days;
+}
+
+function renderDash(){  var st = periodStats();
   var s = state.settings;
   var income = num(s.income);
   var saveGoalAmt = saveTarget();
@@ -799,52 +854,14 @@ function renderDash(){
   h += '<div class="lab">本期还能花</div>';
   h += '<div class="big' + (left < 0 ? " neg" : "") + '">' + money0(left) + '</div>';
   h += '<div class="sub">已花 ' + money0(total) + ' · 可花 ' + money0(spendable)
-     + (saveGoalAmt > 0 ? '（已扣储蓄 ' + money0(saveGoalAmt) + '）' : '')
      + ' · 还剩 ' + daysLeft + ' 天</div>';
   h += '<div class="chips">';
   h += '<div class="chip">今天可花<b class="' + (plan.todaySpend < 0 ? "over" : "") + '">' + money0(plan.todaySpend) + '</b></div>';
-  if (shortfall > 0.5){
-    h += '<div class="chip">储蓄被吃掉<b class="over">' + money0(shortfall) + '</b></div>';
-  } else {
-    h += '<div class="chip">储蓄 ' + money0(saveGoalAmt) + '<b>已达成</b></div>';
-  }
   h += '<div class="chip">储蓄率<b>' + saveGoal + '%</b></div>';
   if (Math.abs(st.cash - total) > 0.5){
     h += '<div class="chip">本期现金支出<b>' + money0(st.cash) + '</b></div>';
   }
   h += '</div></div>';
-
-  // 每日额度与本周预期
-  var fixedLeft = Math.max(0, budgetOf("fixed") - (st.byPool.fixed || 0));
-  var growthLeft = Math.max(0, budgetOf("growth") - (st.byPool.growth || 0));
-
-  h += '<div class="card">';
-  h += '<h3>今天怎么花</h3>';
-  h += '<div style="margin-bottom:4px">';
-  h += '<span class="pill">生存 ' + money0(plan.dLiving) + '</span>';
-  h += '<span class="pill">弹性 ' + money0(plan.dFlex) + '</span>';
-  h += '<span class="pill" style="background:transparent;color:#8b958d">合计 ' + money0(plan.todaySpend) + '</span>';
-  h += '</div>';
-  h += '<div class="hint">另有 固定 ' + money0(fixedLeft) + '、成长 ' + money0(growthLeft) + ' 没动用，按需花，不摊到每天。</div>';
-
-  if (!plan.hasHistory){
-    h += '<div class="hint" style="margin-top:8px">本期第 ' + plan.weekIdx + ' 周 · 还没有上周数据，先按平均值算。下周起会用你的实际消费修正这个数。</div>';
-  } else {
-    var cmp = "";
-    if (plan.prevDaily > 0.5){
-      var dp = (plan.lastDaily - plan.prevDaily) / plan.prevDaily * 100;
-      cmp = "，比前一周" + (dp >= 0 ? "多 " : "少 ") + Math.abs(dp).toFixed(0) + "%";
-    }
-    h += '<div class="hint" style="margin-top:8px">本期第 ' + plan.weekIdx + ' 周 · 上周日均 <b>' + money0(plan.lastDaily) + '</b>'
-       + '（生存 ' + money0(plan.lastLiving) + ' / 弹性 ' + money0(plan.lastFlex) + '）' + cmp + '。<br>'
-       + '按这个速度，月底' + (plan.projectedLeft >= 0 ? '还剩 <b>' + money0(plan.projectedLeft) + '</b>' : '<span class="over">超支 ' + money0(-plan.projectedLeft) + '</span>')
-       + '。</div>';
-    if (plan.lastDaily > plan.todaySpend + 1){
-      h += '<div class="note" style="margin-top:10px">上周你日均花了 ' + money0(plan.lastDaily) + '，比现在的日额高 '
-         + money0(plan.lastDaily - plan.todaySpend) + '。要么把日额往上调、接受月底少剩点，要么这周收一收。</div>';
-    }
-  }
-  h += '</div>';
 
   // 四池
   h += '<div class="grid2">';
@@ -975,18 +992,40 @@ function renderDash(){
     h += '</div></div>';
   }
 
-  // 洞察
+  // 这些数怎么来的
   var tops = Object.keys(st.bySub).map(function(k){ return { k:k, v:st.bySub[k] }; })
               .sort(function(a, b){ return b.v - a.v; });
-  var insight = "本期还没有记录。先拖一份账单进来，看看钱到底去了哪。";
+  var topText = "还没有记录";
   if (tops.length && total > 0){
     var t0 = tops[0];
     var t0sub = String(t0.k).split("|")[1] || String(t0.k);
-    insight = "最大头是「" + t0sub + "」" + money0(t0.v) + "，占 " + (t0.v / total * 100).toFixed(0) + "%。";
-    if (st.byPool.flex > budgetOf("flex")) insight += " 弹性盘已超支，这个月剩下的日子只动生存盘。";
-    else if (left > 0 && perDay < 30) insight += " 日均可用只剩 " + money0(perDay) + "，进入收尾状态。";
+    topText = "「" + t0sub + "」" + money0(t0.v) + " · 占 " + (t0.v / total * 100).toFixed(0) + "%";
   }
-  h += '<div class="note' + (total > 0 && left >= 0 ? ' ok' : '') + '">' + insight + '</div>';
+  var fixedLeft = Math.max(0, budgetOf("fixed") - (st.byPool.fixed || 0));
+  var growthLeft = Math.max(0, budgetOf("growth") - (st.byPool.growth || 0));
+
+  h += '<div class="card" style="background:#fbfdfb;border-color:#dbe7df">';
+  h += '<h3>这些数怎么来的</h3>';
+  h += '<div class="kv"><span>最大头</span><b>' + topText + '</b></div>';
+  h += '<div class="kv"><span>今天可花</span><b>' + money0(plan.todaySpend) + '（生存 ' + money0(plan.dLiving) + ' + 弹性 ' + money0(plan.dFlex) + '）</b></div>';
+  h += '<div class="kv"><span>固定 / 成长</span><b>还有 ' + money0(fixedLeft) + ' / ' + money0(growthLeft) + '，按需花不摊到天</b></div>';
+  if (!plan.hasHistory){
+    h += '<div class="kv"><span>本周</span><b>第 ' + plan.weekIdx + ' 周，先按平均值</b></div>';
+    h += '<div class="hint" style="margin-top:8px">还没有上周数据。下周起会按你的实际消费修正这个日额。</div>';
+  } else {
+    var cmp = "";
+    if (plan.prevDaily > 0.5){
+      var dp = (plan.lastDaily - plan.prevDaily) / plan.prevDaily * 100;
+      cmp = "，" + (dp >= 0 ? "比前一周多 " : "比前一周少 ") + Math.abs(dp).toFixed(0) + "%";
+    }
+    h += '<div class="kv"><span>上周日均</span><b>' + money0(plan.lastDaily) + '（生存 ' + money0(plan.lastLiving) + ' / 弹性 ' + money0(plan.lastFlex) + '）' + cmp + '</b></div>';
+    h += '<div class="kv"><span>按这速度，月底</span><b>' + (plan.projectedLeft >= 0 ? "还剩 " + money0(plan.projectedLeft) : "超支 " + money0(-plan.projectedLeft)) + '</b></div>';
+  }
+  if (plan.lagDays > 0 && plan.estUnrecorded > 1){
+    h += '<div class="hint" style="margin-top:8px">已有 ' + plan.lagDays + ' 天没导入，按上周日均估还有约 '
+       + money0(plan.estUnrecorded) + ' 花掉了但没记进来，日额里已经先扣掉。</div>';
+  }
+  h += '</div>';
 
   var pend = pendingFixes();
   if (pend.length){
@@ -1003,6 +1042,25 @@ function renderDash(){
     st.txs.slice(0, 6).forEach(function(t){ h += txRowHtml(t, false); });
   }
   h += '</div></div>';
+
+  // 本周三餐
+  var meals = mealsWeek();
+  var mealTotal = 0, mealMax = 1;
+  meals.forEach(function(m){ mealTotal += m.sum; if (m.sum > mealMax) mealMax = m.sum; });
+  var dayNames = ["一", "二", "三", "四", "五", "六", "日"];
+  h += '<div class="card"><h3>本周一日三餐 · ' + money0(mealTotal) + '</h3>';
+  h += '<div class="chart">';
+  meals.forEach(function(m, i){
+    var pct = m.sum > 0 ? Math.max(4, m.sum / mealMax * 100) : 0;
+    h += '<div class="col">';
+    h += '<div class="v">' + (m.sum > 0 ? money0(m.sum) : "·") + '</div>';
+    h += '<div class="barwrap"><i class="' + (m.today ? "today" : "") + '" style="height:' + pct.toFixed(1) + '%"></i></div>';
+    h += '<div class="d">' + dayNames[i] + '</div>';
+    h += '</div>';
+  });
+  h += '</div>';
+  h += '<div class="hint" style="margin-top:10px">只统计子类「吃饭」。矿泉水和零食记到「零食」，就不会混进这张图。</div>';
+  h += '</div>';
 
   document.getElementById("v-dash").innerHTML = h;
 }
