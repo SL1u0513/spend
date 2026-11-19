@@ -57,6 +57,7 @@ body{
 .hero{background:linear-gradient(160deg,#1f2b25,#2c3a31);color:#eef3ef;border:0}
 .hero .lab{font-size:12.5px;color:#9fb3a7;letter-spacing:.5px}
 .hero .big{font-size:38px;font-weight:700;letter-spacing:-1px;font-variant-numeric:tabular-nums;margin:2px 0 2px}
+.hero .big.neg{color:#f0a19b}
 .hero .sub{font-size:12.5px;color:#a8bcb0}
 .hero .chips{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
 .hero .chip{background:rgba(255,255,255,.09);border-radius:9px;padding:7px 10px;font-size:12px;color:#dbe8e0;min-width:88px}
@@ -434,6 +435,11 @@ function budgetOf(poolId){
 }
 function saveTarget(){ return num(state.settings.income) * num(state.settings.saveRate) / 100; }
 
+/* 可花基数 = 生活费 − 储蓄目标。储蓄那份从到账起就不算「能花的钱」。 */
+function spendableBase(){
+  return Math.max(0, num(state.settings.income) - saveTarget());
+}
+
 function monthIndex(d){ return d.getFullYear() * 12 + d.getMonth(); }
 
 /* 订阅清单一共多少（年付按 12 个月、季付按 3 个月摊成月均） */
@@ -716,24 +722,33 @@ function renderDash(){
   var st = periodStats();
   var s = state.settings;
   var income = num(s.income);
+  var saveGoalAmt = saveTarget();
+  var spendable = spendableBase();
   var total = st.total;
-  var remaining = income - total;
+  var left = spendable - total;
   var today = startOfDay(new Date());
   var daysLeft = Math.max(1, Math.round((st.range.end - today) / 86400000));
-  var perDay = remaining / daysLeft;
-  var saveActual = income > 0 ? (income - total) / income * 100 : 0;
+  var perDay = left / daysLeft;
+  var savedNow = income - total;
+  var shortfall = Math.max(0, saveGoalAmt - savedNow);
   var saveGoal = num(s.saveRate);
 
   var h = "";
 
   h += '<div class="card hero">';
-  h += '<div class="lab">本期还剩（可花）</div>';
-  h += '<div class="big">' + money0(remaining) + '</div>';
-  h += '<div class="sub">已花 ' + money0(total) + ' · 生活费 ' + money0(income) + ' · 本期还剩 ' + daysLeft + ' 天</div>';
+  h += '<div class="lab">本期还能花</div>';
+  h += '<div class="big' + (left < 0 ? " neg" : "") + '">' + money0(left) + '</div>';
+  h += '<div class="sub">已花 ' + money0(total) + ' · 可花 ' + money0(spendable)
+     + (saveGoalAmt > 0 ? '（已扣储蓄 ' + money0(saveGoalAmt) + '）' : '')
+     + ' · 还剩 ' + daysLeft + ' 天</div>';
   h += '<div class="chips">';
-  h += '<div class="chip">日均可用<b>' + money0(perDay) + '</b></div>';
-  h += '<div class="chip">当前留存率<b class="' + (saveActual >= saveGoal ? "" : "over") + '">' + saveActual.toFixed(0) + '%</b></div>';
-  h += '<div class="chip">目标储蓄率<b>' + saveGoal + '%</b></div>';
+  h += '<div class="chip">日均可用<b class="' + (perDay < 0 ? "over" : "") + '">' + money0(perDay) + '</b></div>';
+  if (shortfall > 0.5){
+    h += '<div class="chip">储蓄被吃掉<b class="over">' + money0(shortfall) + '</b></div>';
+  } else {
+    h += '<div class="chip">储蓄 ' + money0(saveGoalAmt) + '<b>已达成</b></div>';
+  }
+  h += '<div class="chip">储蓄率<b>' + saveGoal + '%</b></div>';
   if (Math.abs(st.cash - total) > 0.5){
     h += '<div class="chip">本期现金支出<b>' + money0(st.cash) + '</b></div>';
   }
@@ -877,9 +892,9 @@ function renderDash(){
     var t0sub = String(t0.k).split("|")[1] || String(t0.k);
     insight = "最大头是「" + t0sub + "」" + money0(t0.v) + "，占 " + (t0.v / total * 100).toFixed(0) + "%。";
     if (st.byPool.flex > budgetOf("flex")) insight += " 弹性盘已超支，这个月剩下的日子只动生存盘。";
-    else if (remaining > 0 && perDay < 30) insight += " 日均可用只剩 " + money0(perDay) + "，进入收尾状态。";
+    else if (left > 0 && perDay < 30) insight += " 日均可用只剩 " + money0(perDay) + "，进入收尾状态。";
   }
-  h += '<div class="note' + (total > 0 && remaining >= 0 ? ' ok' : '') + '">' + insight + '</div>';
+  h += '<div class="note' + (total > 0 && left >= 0 ? ' ok' : '') + '">' + insight + '</div>';
 
   var pend = pendingFixes();
   if (pend.length){
@@ -1047,7 +1062,7 @@ function pasteFromClipboard(){
 
 function entryHintHtml(){
   var st = periodStats();
-  var left = num(state.settings.income) - st.total;
+  var left = spendableBase() - st.total;
   if (entryPool === "outside"){
     return '<b>应急</b>是给你自己看的账：这钱由爸妈补或报销，不占任何池、不进储蓄率，不会让「已花」变多，也不会让哪个池超支。<br>' +
            '子类选 <b>医疗 / 牙科 / 药品</b>，月底能看出一年在看病上花了多少。';
