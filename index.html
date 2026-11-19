@@ -143,6 +143,7 @@ table.prev .dup{opacity:.45}
 .toast.on{opacity:1;transform:translate(-50%,0)}
 .okText{color:#2f9e6e !important}
 .errText{color:#cf4b45 !important}
+.pill{display:inline-block;background:#f0f3ef;color:#3c463f;border-radius:9px;padding:6px 11px;font-size:12.5px;margin:0 6px 6px 0;font-variant-numeric:tabular-nums}
 
 /* 新手引导 */
 .tour{position:fixed;inset:0;z-index:120;display:none}
@@ -718,6 +719,64 @@ function applyAllFixes(){
 
 /* ============================ 看板 ============================ */
 
+/* 每日额度模型：
+   第 1 周没有历史，按平均值（池剩余 ÷ 剩余天数）；
+   第 2 周起，用「上周实际日均」做预期并给出月末预测。 */
+function dailyPlan(){
+  var st = periodStats();
+  var spendable = spendableBase();
+  var today = startOfDay(new Date());
+  var daysLeft = Math.max(1, Math.round((st.range.end - today) / 86400000));
+
+  var pLeft = {};
+  POOLS.forEach(function(p){ pLeft[p.id] = budgetOf(p.id) - (st.byPool[p.id] || 0); });
+
+  var dLiving = Math.max(0, pLeft.living / daysLeft);
+  var dFlex = Math.max(0, pLeft.flex / daysLeft);
+  var dFixed = Math.max(0, pLeft.fixed / daysLeft);
+  var dGrowth = Math.max(0, pLeft.growth / daysLeft);
+  var todaySpend = dLiving + dFlex;          // 一天里真正会随手花掉的部分
+
+  var d7 = 7 * 86400000;
+  var w1s = new Date(today.getTime() - d7);
+  var w2s = new Date(today.getTime() - 2 * d7);
+  var w1 = 0, w1Living = 0, w1Flex = 0, w2 = 0;
+
+  for (var i = 0; i < state.tx.length; i++){
+    var t = state.tx[i];
+    if (t.pool === "outside") continue;
+    var d = parseTs(t.ts);
+    if (!d) continue;
+    var a = num(t.amount);
+    var sp = num(t.spread);
+    var v = sp > 1 ? a / sp : a;
+    if (d >= w1s && d < today){
+      w1 += v;
+      if (t.pool === "living") w1Living += v;
+      if (t.pool === "flex") w1Flex += v;
+    } else if (d >= w2s && d < w1s){
+      w2 += v;
+    }
+  }
+
+  var lastDaily = w1 / 7;
+  var prevDaily = w2 / 7;
+  var hasHistory = w1 > 0;
+
+  var weekIdx = Math.floor((today - st.range.start) / d7) + 1;
+  if (weekIdx < 1) weekIdx = 1;
+
+  var projectedLeft = spendable - (st.total + lastDaily * daysLeft);
+
+  return {
+    daysLeft: daysLeft, weekIdx: weekIdx,
+    dLiving: dLiving, dFlex: dFlex, dFixed: dFixed, dGrowth: dGrowth,
+    todaySpend: todaySpend,
+    lastDaily: lastDaily, lastLiving: w1Living / 7, lastFlex: w1Flex / 7, prevDaily: prevDaily,
+    hasHistory: hasHistory, projectedLeft: projectedLeft
+  };
+}
+
 function renderDash(){
   var st = periodStats();
   var s = state.settings;
@@ -734,6 +793,7 @@ function renderDash(){
   var saveGoal = num(s.saveRate);
 
   var h = "";
+  var plan = dailyPlan();
 
   h += '<div class="card hero">';
   h += '<div class="lab">本期还能花</div>';
@@ -742,7 +802,7 @@ function renderDash(){
      + (saveGoalAmt > 0 ? '（已扣储蓄 ' + money0(saveGoalAmt) + '）' : '')
      + ' · 还剩 ' + daysLeft + ' 天</div>';
   h += '<div class="chips">';
-  h += '<div class="chip">日均可用<b class="' + (perDay < 0 ? "over" : "") + '">' + money0(perDay) + '</b></div>';
+  h += '<div class="chip">今天可花<b class="' + (plan.todaySpend < 0 ? "over" : "") + '">' + money0(plan.todaySpend) + '</b></div>';
   if (shortfall > 0.5){
     h += '<div class="chip">储蓄被吃掉<b class="over">' + money0(shortfall) + '</b></div>';
   } else {
@@ -753,6 +813,38 @@ function renderDash(){
     h += '<div class="chip">本期现金支出<b>' + money0(st.cash) + '</b></div>';
   }
   h += '</div></div>';
+
+  // 每日额度与本周预期
+  var fixedLeft = Math.max(0, budgetOf("fixed") - (st.byPool.fixed || 0));
+  var growthLeft = Math.max(0, budgetOf("growth") - (st.byPool.growth || 0));
+
+  h += '<div class="card">';
+  h += '<h3>今天怎么花</h3>';
+  h += '<div style="margin-bottom:4px">';
+  h += '<span class="pill">生存 ' + money0(plan.dLiving) + '</span>';
+  h += '<span class="pill">弹性 ' + money0(plan.dFlex) + '</span>';
+  h += '<span class="pill" style="background:transparent;color:#8b958d">合计 ' + money0(plan.todaySpend) + '</span>';
+  h += '</div>';
+  h += '<div class="hint">另有 固定 ' + money0(fixedLeft) + '、成长 ' + money0(growthLeft) + ' 没动用，按需花，不摊到每天。</div>';
+
+  if (!plan.hasHistory){
+    h += '<div class="hint" style="margin-top:8px">本期第 ' + plan.weekIdx + ' 周 · 还没有上周数据，先按平均值算。下周起会用你的实际消费修正这个数。</div>';
+  } else {
+    var cmp = "";
+    if (plan.prevDaily > 0.5){
+      var dp = (plan.lastDaily - plan.prevDaily) / plan.prevDaily * 100;
+      cmp = "，比前一周" + (dp >= 0 ? "多 " : "少 ") + Math.abs(dp).toFixed(0) + "%";
+    }
+    h += '<div class="hint" style="margin-top:8px">本期第 ' + plan.weekIdx + ' 周 · 上周日均 <b>' + money0(plan.lastDaily) + '</b>'
+       + '（生存 ' + money0(plan.lastLiving) + ' / 弹性 ' + money0(plan.lastFlex) + '）' + cmp + '。<br>'
+       + '按这个速度，月底' + (plan.projectedLeft >= 0 ? '还剩 <b>' + money0(plan.projectedLeft) + '</b>' : '<span class="over">超支 ' + money0(-plan.projectedLeft) + '</span>')
+       + '。</div>';
+    if (plan.lastDaily > plan.todaySpend + 1){
+      h += '<div class="note" style="margin-top:10px">上周你日均花了 ' + money0(plan.lastDaily) + '，比现在的日额高 '
+         + money0(plan.lastDaily - plan.todaySpend) + '。要么把日额往上调、接受月底少剩点，要么这周收一收。</div>';
+    }
+  }
+  h += '</div>';
 
   // 四池
   h += '<div class="grid2">';
