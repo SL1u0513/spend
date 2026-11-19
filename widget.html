@@ -129,10 +129,15 @@ function render(){
     }
   }
 
-  var remaining = income - total;
+  var remaining;
+  var saveAmt = income * (num(s.saveRate) || 0) / 100;
+  var spendable = Math.max(0, income - saveAmt);
+  remaining = spendable - total;
   var daysLeft = Math.max(1, Math.round((end - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000));
   var perDay = remaining / daysLeft;
-  var usedPct = income > 0 ? Math.min(100, Math.max(0, total / income * 100)) : 0;
+  var usedPct = spendable > 0 ? Math.min(100, Math.max(0, total / spendable * 100)) : 0;
+  var savedNow = income - total;
+  var shortfall = Math.max(0, saveAmt - savedNow);
 
   // 本周弹性额度
   var periodDays = Math.max(1, Math.round((end - start) / 86400000));
@@ -140,9 +145,11 @@ function render(){
 
   var h = '';
   h += '<div class="card">';
-  h += '<div class="lab">本期还剩（可花）</div>';
-  h += '<div class="big">' + money(remaining) + '</div>';
-  h += '<div class="sub">已花 ' + money(total) + ' · 生活费 ' + money(income) + ' · 还剩 ' + daysLeft + ' 天</div>';
+  h += '<div class="lab">本期还能花</div>';
+  h += '<div class="big"' + (remaining < 0 ? ' style="color:#f0a19b"' : '') + '>' + money(remaining) + '</div>';
+  h += '<div class="sub">已花 ' + money(total) + ' · 可花 ' + money(spendable)
+     + (saveAmt > 0 ? '（已扣储蓄 ' + money(saveAmt) + '）' : '')
+     + ' · 还剩 ' + daysLeft + ' 天</div>';
   h += '<div class="grid">';
   h += '<div class="k"><small>日均可用</small><b>' + money(perDay) + '</b></div>';
   h += '<div class="k"><small>本周弹性还剩</small><b>' + money(Math.max(0, weekBudget - flexWeek)) + '</b></div>';
@@ -150,8 +157,10 @@ function render(){
   h += '<div class="bar"><i style="width:' + usedPct.toFixed(1) + '%;background:' + (usedPct > 90 ? "#cf4b45" : "#2f9e6e") + '"></i></div>';
   h += '</div>';
 
-  h += '<div class="foot">' + (Math.abs(cash - total) > 0.5 ? '本期现金支出 ' + money2(cash) + '<br>' : '') +
-       '点一下看全部明细与分类</div>';
+  h += '<div class="foot">'
+     + (shortfall > 0.5 ? '<span style="color:#c0564f">储蓄被吃掉 ' + money(shortfall) + '</span><br>' : '')
+     + (Math.abs(cash - total) > 0.5 ? '本期现金支出 ' + money2(cash) + '<br>' : '')
+     + '点一下看全部明细与分类</div>';
 
   el.innerHTML = h;
   document.body.onclick = function(){ location.href = "./index.html"; };
