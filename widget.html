@@ -99,6 +99,7 @@ function render(){
   var pmi = start.getFullYear() * 12 + start.getMonth();
 
   var total = 0, cash = 0, flexWeek = 0, flexUsed = 0;
+  var byPool = {};
   var tx = Array.isArray(st.tx) ? st.tx : [];
 
   // 本周（周一起）
@@ -125,6 +126,7 @@ function render(){
     if (inPeriod){
       cash += a;
       total += a;
+      byPool[t.pool] = (byPool[t.pool] || 0) + a;
       if (t.pool === "flex" && d >= wkStart && d < wkEnd) flexWeek += a;
     }
   }
@@ -139,6 +141,12 @@ function render(){
   var savedNow = income - total;
   var shortfall = Math.max(0, saveAmt - savedNow);
 
+  // 今天的可花：生存 + 弹性，各自按剩余天数摊（超支的池按 0 算）
+  var pctL = num(s.pct && s.pct.living) / 100, pctF = num(s.pct && s.pct.flex) / 100;
+  var leftLiving = Math.max(0, income * pctL - (byPool.living || 0));
+  var leftFlex = Math.max(0, income * pctF - (byPool.flex || 0));
+  var todaySpend = leftLiving / daysLeft + leftFlex / daysLeft;
+
   // 本周弹性额度
   var periodDays = Math.max(1, Math.round((end - start) / 86400000));
   var weekBudget = num(s.pct && s.pct.flex) / 100 * income * 7 / periodDays;
@@ -151,7 +159,7 @@ function render(){
      + (saveAmt > 0 ? '（已扣储蓄 ' + money(saveAmt) + '）' : '')
      + ' · 还剩 ' + daysLeft + ' 天</div>';
   h += '<div class="grid">';
-  h += '<div class="k"><small>日均可用</small><b>' + money(perDay) + '</b></div>';
+  h += '<div class="k"><small>今天可花</small><b>' + money(todaySpend) + '</b></div>';
   h += '<div class="k"><small>本周弹性还剩</small><b>' + money(Math.max(0, weekBudget - flexWeek)) + '</b></div>';
   h += '</div>';
   h += '<div class="bar"><i style="width:' + usedPct.toFixed(1) + '%;background:' + (usedPct > 90 ? "#cf4b45" : "#2f9e6e") + '"></i></div>';
